@@ -15,15 +15,15 @@ Then run $ go build and <the .exe file> to see that everything is working proper
 
 4. Create the skeleton
    Job-Processor-API/
-   ├── cmd/
-   │   └── api/
-   │       └── main.go
-   ├── internal/
-   │   ├── handler/
-   │   ├── service/
-   │   └── repository/
-   ├── go.mod
-   └── .gitignore
+   <br>├── cmd/
+   <br>│   └── api/
+   <br>│       └── main.go
+   <br>├── internal/
+   <br>│   ├── handler/
+   <br>│   ├── service/
+   <br>│   └── repository/
+   <br>├── go.mod
+   <br>└── .gitignore
 
 5. Explanation:
    1. **cmd/api/main.go** — the entry point.

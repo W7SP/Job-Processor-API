@@ -15,7 +15,6 @@ func main() {
 			http.ListenAndServe(":8080", mux) -> starts the HTTP server ON 8080
 			This is a blocking call: the program sits here running forever, handling requests
 			It only returns if there is an error.
-
 		*/
 
 		log.Fatal(err) // logs the error
