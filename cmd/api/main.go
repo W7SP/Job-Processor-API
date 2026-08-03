@@ -12,6 +12,8 @@ import (
 	"github.com/W7SP/Job-Processor-API/internal/job"
 	"github.com/W7SP/Job-Processor-API/internal/task"
 	"github.com/W7SP/Job-Processor-API/internal/person"
+	"github.com/W7SP/Job-Processor-API/internal/furniture"
+
 )
 
 func main() {
@@ -19,6 +21,7 @@ func main() {
 		store: job.NewMemoryStore(),
 		storeTasks: task.NewMemoryStore(),
 		storePerson: person.NewMemoryStore(),
+		storeFurniture: furniture.NewMemoryStore(),
 	}
 
 	// Creates a router (urls,py)
@@ -39,6 +42,10 @@ func main() {
 	r.Post("/person", app.createPersonHandler)
 	r.Get("/person/{id}", app.getPersonHandler)
 
+	r.Post("/furniture", app.createFurnitureHandler)
+	r.Get("/furniture/{id}", app.getFurnitureHandler)
+
+
 	log.Println("starting server on :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil { // Start the server and log the error if such exists
 		log.Fatal(err)
@@ -54,6 +61,7 @@ type application struct {
 	store job.Store
 	storeTasks task.Store
 	storePerson person.Store
+	storeFurniture furniture.Store
 }
 
 
@@ -136,6 +144,12 @@ func (app *application) getTaskHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(t)
 }
 
+type createPersonRequest struct {
+	Name string `json:"name"`
+	Occupation string `json:"occupation"`
+	Age int `json:"age"`
+}
+
 func (app *application) createPersonHandler(w http.ResponseWriter, r *http.Request) {
 	var req createPersonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -164,8 +178,40 @@ func (app *application) getPersonHandler(w http.ResponseWriter, r *http.Request)
 	json.NewEncoder(w).Encode(p)
 }
 
-type createPersonRequest struct {
-	Name string `json:"name"`
-	Occupation string `json:"occupation"`
-	Age int `json:"age"`
+type createFurnitureRequest struct {
+	Type string `json:"type"`
+	Material string `json:"material"`
+}
+
+func (app *application) createFurnitureHandler(w http.ResponseWriter, r *http.Request) {
+	var req createFurnitureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+	}
+
+	p, err := app.storeFurniture.Create(
+		req.Type,
+		req.Material,
+		)
+
+	if err != nil {
+		http.Error(w, "failed to create furniture", http.StatusInternalServerError)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(p)
+}
+
+func (app *application) getFurnitureHandler(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	f, err := app.storeFurniture.Get(id)
+	if err != nil {
+		if errors.Is(err, job.ErrNotFound) {
+			http.Error(w, "furniture not found", http.StatusNotFound)
+		}
+		http.Error(w, "failed to get furniture", http.StatusInternalServerError)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(f)
 }
