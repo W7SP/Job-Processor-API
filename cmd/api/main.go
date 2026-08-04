@@ -9,19 +9,20 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
-	"github.com/W7SP/Job-Processor-API/internal/job"
-	"github.com/W7SP/Job-Processor-API/internal/task"
-	"github.com/W7SP/Job-Processor-API/internal/person"
+	"github.com/W7SP/Job-Processor-API/internal/bike"
 	"github.com/W7SP/Job-Processor-API/internal/furniture"
-
+	"github.com/W7SP/Job-Processor-API/internal/job"
+	"github.com/W7SP/Job-Processor-API/internal/person"
+	"github.com/W7SP/Job-Processor-API/internal/task"
 )
 
 func main() {
 	app := &application{
-		store: job.NewMemoryStore(),
-		storeTasks: task.NewMemoryStore(),
-		storePerson: person.NewMemoryStore(),
+		store:          job.NewMemoryStore(),
+		storeTasks:     task.NewMemoryStore(),
+		storePerson:    person.NewMemoryStore(),
 		storeFurniture: furniture.NewMemoryStore(),
+		storeBike:      bike.NewMemoryStore(),
 	}
 
 	// Creates a router (urls,py)
@@ -45,6 +46,8 @@ func main() {
 	r.Post("/furniture", app.createFurnitureHandler)
 	r.Get("/furniture/{id}", app.getFurnitureHandler)
 
+	r.Post("/bikes", app.createBikeHandler)
+	r.Get("/bikes/{id}", app.getBikeHandler)
 
 	log.Println("starting server on :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil { // Start the server and log the error if such exists
@@ -58,12 +61,12 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type application struct {
-	store job.Store
-	storeTasks task.Store
-	storePerson person.Store
+	store          job.Store
+	storeTasks     task.Store
+	storePerson    person.Store
 	storeFurniture furniture.Store
+	storeBike      bike.Store
 }
-
 
 type createJobRequest struct {
 	Payload string `json:"payload"`
@@ -114,7 +117,6 @@ type createTaskRequest struct {
 	Action string `json:"action"`
 }
 
-
 func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 	var req createTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -145,19 +147,21 @@ func (app *application) getTaskHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 type createPersonRequest struct {
-	Name string `json:"name"`
+	Name       string `json:"name"`
 	Occupation string `json:"occupation"`
-	Age int `json:"age"`
+	Age        int    `json:"age"`
 }
 
 func (app *application) createPersonHandler(w http.ResponseWriter, r *http.Request) {
 	var req createPersonRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
 	}
 	p, err := app.storePerson.Create(req.Name, req.Occupation, req.Age)
 	if err != nil {
 		http.Error(w, "failed to create person", http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -170,8 +174,10 @@ func (app *application) getPersonHandler(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			http.Error(w, "person not found", http.StatusNotFound)
+			return
 		}
 		http.Error(w, "failed to get person", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -179,7 +185,7 @@ func (app *application) getPersonHandler(w http.ResponseWriter, r *http.Request)
 }
 
 type createFurnitureRequest struct {
-	Type string `json:"type"`
+	Type     string `json:"type"`
 	Material string `json:"material"`
 }
 
@@ -187,15 +193,17 @@ func (app *application) createFurnitureHandler(w http.ResponseWriter, r *http.Re
 	var req createFurnitureRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
 	}
 
 	p, err := app.storeFurniture.Create(
 		req.Type,
 		req.Material,
-		)
+	)
 
 	if err != nil {
 		http.Error(w, "failed to create furniture", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -214,4 +222,41 @@ func (app *application) getFurnitureHandler(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(f)
+}
+
+type createBikeRequest struct {
+	Type     string `json:"type"`
+	Material string `json:"material"`
+}
+
+func (app *application) createBikeHandler(w http.ResponseWriter, r *http.Request) {
+	var req createBikeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	b, ok := app.storeBike.Create(req.Type, req.Material)
+	if ok != nil {
+		http.Error(w, "failed to create bike", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(b)
+}
+
+func (app *application) getBikeHandler(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	b, err := app.storeBike.Get(id)
+	if err != nil {
+		if errors.Is(err, job.ErrNotFound) {
+			http.Error(w, "bike not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get bike", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(b)
 }
