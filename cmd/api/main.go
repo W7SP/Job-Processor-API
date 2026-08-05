@@ -15,7 +15,7 @@ import (
 
 func main() {
 	app := &application{
-		store: job.NewMemoryStore(),
+		store:      job.NewMemoryStore(),
 		storeTasks: task.NewMemoryStore(),
 	}
 
@@ -53,7 +53,7 @@ type createJobRequest struct {
 // Because later you can test with an application wit ha mocked store
 // Also application has methods that you know depend on its fields
 type application struct {
-	store job.Store
+	store      job.Store
 	storeTasks task.Store
 }
 
@@ -98,7 +98,6 @@ type createTaskRequest struct {
 	Action string `json:"action"`
 }
 
-
 func (app *application) createTaskHandler(w http.ResponseWriter, r *http.Request) {
 	var req createTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -119,10 +118,12 @@ func (app *application) getTaskHandler(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	t, err := app.storeTasks.Get(id)
 	if err != nil {
-		if errors.Is(err, job.ErrNotFound) {
+		if errors.Is(err, task.ErrNotFound) {
 			http.Error(w, "task not found", http.StatusNotFound)
+			return
 		}
 		http.Error(w, "failed to get task", http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(t)
