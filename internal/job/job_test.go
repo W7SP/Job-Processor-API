@@ -20,7 +20,7 @@ func TestMemoryStore_CreateAndGet(t *testing.T) {
 	if created.Payload != "resize-image" {
 		t.Errorf("expected payload %q, got %q", "resize-image", created.Payload) // This records the fail but continues, then still fails the test
 	}
-	
+
 	fetched, err := store.Get(created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error on Get: %v", err)
@@ -37,5 +37,22 @@ func TestMemoryStore_GetNotFound(t *testing.T) {
 	_, err := store.Get("does-not-exist")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestMemoryStore_UpdateStatus(t *testing.T) {
+	store := NewMemoryStore()
+	j, err := store.Create("resize-image")
+	if err != nil {
+		t.Fatalf("unexpected error on Create: %v", err)
+	}
+
+	errFromUpdate := store.UpdateStatus(j.ID, "running")
+	if errFromUpdate != nil {
+		t.Fatalf("unexpected error on Update: %v", err)
+	}
+
+	if j.Status != "running" {
+		t.Errorf("expected status %q, got %q", "running", j.Status)
 	}
 }

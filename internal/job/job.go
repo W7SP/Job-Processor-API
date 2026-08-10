@@ -2,6 +2,7 @@ package job
 
 import (
 	"errors"
+	"log"
 	"sync"
 
 	"github.com/google/uuid"
@@ -24,8 +25,16 @@ var ErrNotFound = errors.New("job not found")
 type Store interface {
 	Create(payload string) (*Job, error)
 	Get(id string) (*Job, error)
+	GetAll() (map[string]*Job, error)
 } // Why not UPDATE and DELETE? Cuz being explicit and specific is cool
 // The bigger the interface, the weaker the abstraction
+
+// StatusUpdater is the capability to update a job's status.
+// Kept separate from Store deliberately — HTTP handlers never need this,
+// only workers do. Each consumer sees exactly the surface it needs.
+type StatusUpdater interface {
+	UpdateStatus(id string, status string) error
+}
 
 // MemoryStore is an in-memory implementation of Store, safe for concurrent use.
 // This is done so we can lock and unlock the jobs map for in-memory operations.
@@ -33,14 +42,6 @@ type Store interface {
 type MemoryStore struct {
 	mu   sync.Mutex
 	jobs map[string]*Job
-}
-
-// NewMemoryStore First, any instance returned from this will share the same mutex so that jobs is always safe during concurrency
-// Second this will give us an instance with an empty map if we just do :=MemoryStore{} the map will be nil -> BAD
-func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
-		jobs: make(map[string]*Job),
-	}
 }
 
 func (s *MemoryStore) Create(payload string) (*Job, error) {
@@ -53,6 +54,7 @@ func (s *MemoryStore) Create(payload string) (*Job, error) {
 		Payload: payload,
 	}
 	s.jobs[j.ID] = j
+	log.Printf("CREATE JOBS: %v", s.jobs)
 	return j, nil
 }
 
@@ -65,4 +67,31 @@ func (s *MemoryStore) Get(id string) (*Job, error) {
 		return nil, ErrNotFound
 	}
 	return j, nil
+}
+
+func (s *MemoryStore) GetAll() (map[string]*Job, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.jobs, nil
+}
+
+// UpdateStatus ASK IF I CAN USE THE GET METHOD INSUDE UPDATESTATUS INSTEAD OF JUST MANUALLY GETTING FORM THE MAP
+func (s *MemoryStore) UpdateStatus(id string, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j, ok := s.jobs[id]
+	if !ok {
+		return ErrNotFound
+	}
+	j.Status = status
+	return nil
+}
+
+// NewMemoryStore First, any instance returned from this will share the same mutex so that jobs is always safe during concurrency
+// Second this will give us an instance with an empty map if we just do :=MemoryStore{} the map will be nil -> BAD
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		jobs: make(map[string]*Job),
+	}
 }

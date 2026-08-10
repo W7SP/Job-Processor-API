@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/W7SP/Job-Processor-API/internal/job"
+	"github.com/W7SP/Job-Processor-API/internal/task"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -25,6 +26,75 @@ func (f *fakeStore) Create(payload string) (*job.Job, error) {
 
 func (f *fakeStore) Get(id string) (*job.Job, error) {
 	return f.getFunc(id)
+}
+
+type fakeTaskStore struct {
+	createFunc func(action string) (*task.Task, error)
+	getFunc    func(id string) (*task.Task, error)
+}
+
+func (f *fakeTaskStore) Create(action string) (*task.Task, error) {
+	return f.createFunc(action)
+}
+
+func (f *fakeTaskStore) Get(id string) (*task.Task, error) {
+	return f.getFunc(id)
+}
+
+func TestCreateTaskHandler_Success(t *testing.T) {
+	app := &application{
+		storeTasks: &fakeTaskStore{
+			createFunc: func(action string) (*task.Task, error) {
+				return &task.Task{ID: "fixed-id", Action: action, Status: "pending"}, nil
+			},
+		},
+	}
+
+	body := bytes.NewBufferString(`{"action":"create"}`)
+	req := httptest.NewRequest(http.MethodPost, "/tasks", body)
+	rec := httptest.NewRecorder()
+
+	app.createTaskHandler(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d", http.StatusCreated, rec.Code)
+	}
+	var got task.Task
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if got.ID != "fixed-id" {
+		t.Errorf("expected ID %q, got %q", "fixed-id", got.ID)
+	}
+}
+
+func TestGetTaskHandler_NotFound(t *testing.T) {
+	var receivedID string
+
+	app := &application{
+		storeTasks: &fakeTaskStore{
+			getFunc: func(id string) (*task.Task, error) {
+				receivedID = id
+				return nil, task.ErrNotFound
+			},
+		},
+	}
+
+	r := chi.NewRouter()
+	r.Get("/tasks/{id}", app.getTaskHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/does-not-exist", nil)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+
+	if receivedID != "does-not-exist" {
+		t.Errorf("expected handler to receive id %q, got %q", "does-not-exist", receivedID)
+	}
 }
 
 func TestCreateJobHandler_Success(t *testing.T) {
@@ -80,7 +150,7 @@ func TestGetJobHandler_NotFound_IMPROPER(t *testing.T) {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 	}
 
-	t.Logf("id received by store.Get: %q", receivedID)
+	t.Logf("IMPROPER id received by store.Get: %q", receivedID)
 }
 
 func TestGetJobHandler_NotFound(t *testing.T) {
@@ -112,6 +182,8 @@ func TestGetJobHandler_NotFound(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 	}
+
+	t.Logf("id received by store.Get: %q", receivedID)
 
 	if receivedID != "does-not-exist" {
 		t.Errorf("expected handler to receive id %q, got %q", "does-not-exist", receivedID)
