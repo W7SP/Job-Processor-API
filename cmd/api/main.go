@@ -24,7 +24,7 @@ func main() {
 	pool.LaunchRoutines(3)
 
 	app := &application{
-		store:   job.NewMemoryStore(),
+		store:   store,
 		jobChan: jobChannel,
 	}
 
