@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/W7SP/Job-Processor-API/internal/car"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -23,6 +24,7 @@ func main() {
 		storePerson:    person.NewMemoryStore(),
 		storeFurniture: furniture.NewMemoryStore(),
 		storeBike:      bike.NewMemoryStore(),
+		storeCar:       car.NewMemoryStore(),
 	}
 
 	// Creates a router (urls,py)
@@ -49,6 +51,9 @@ func main() {
 	r.Post("/bikes", app.createBikeHandler)
 	r.Get("/bikes/{id}", app.getBikeHandler)
 
+	r.Post("/cars", app.createCarHandler)
+	r.Get("/cars/{id}", app.getCarHandler)
+
 	log.Println("starting server on :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil { // Start the server and log the error if such exists
 		log.Fatal(err)
@@ -66,6 +71,7 @@ type application struct {
 	storePerson    person.Store
 	storeFurniture furniture.Store
 	storeBike      bike.Store
+	storeCar       car.Store
 }
 
 type createJobRequest struct {
@@ -236,8 +242,8 @@ func (app *application) createBikeHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	b, ok := app.storeBike.Create(req.Type, req.Material)
-	if ok != nil {
+	b, err := app.storeBike.Create(req.Type, req.Material)
+	if err != nil {
 		http.Error(w, "failed to create bike", http.StatusInternalServerError)
 		return
 	}
@@ -259,4 +265,43 @@ func (app *application) getBikeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(b)
+}
+
+type createCarRequest struct {
+	Brand string `json:"brand"`
+}
+
+func (app *application) createCarHandler(w http.ResponseWriter, r *http.Request) {
+	var req createCarRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	c, err := app.storeCar.Create(req.Brand)
+	if err != nil {
+		http.Error(w, "failed to create car", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(c)
+}
+
+func (app *application) getCarHandler(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	c, err := app.storeCar.Get(id)
+	if err != nil {
+		if errors.Is(err, car.ErrNotFound) {
+			http.Error(w, "car not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get car", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(c)
 }
