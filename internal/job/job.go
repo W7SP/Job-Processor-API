@@ -52,6 +52,7 @@ func (s *MemoryStore) Create(payload string) (*Job, error) {
 		Status:  "pending",
 		Payload: payload,
 	}
+
 	s.jobs[j.ID] = j
 	return j, nil
 }

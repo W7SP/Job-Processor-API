@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/W7SP/Job-Processor-API/internal/car"
+	"github.com/W7SP/Job-Processor-API/internal/ereader"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
@@ -25,6 +26,7 @@ func main() {
 		storeFurniture: furniture.NewMemoryStore(),
 		storeBike:      bike.NewMemoryStore(),
 		storeCar:       car.NewMemoryStore(),
+		storeEReader:   ereader.NewMemoryStore(),
 	}
 
 	// Creates a router (urls,py)
@@ -35,7 +37,8 @@ func main() {
 	r.Use(middleware.Recoverer)
 	// The order matters, each middleware will be executed before every request
 
-	r.Get("/healthz", healthHandler)      // On /healthz call healthHandler, this time specifically for GET requests
+	r.Get("/healthz", healthHandler) // On /healthz call healthHandler, this time specifically for GET requests
+
 	r.Post("/jobs", app.createJobHandler) // On /jobs call app.createJobHandler
 	r.Get("/jobs/{id}", app.getJobHandler)
 
@@ -53,6 +56,9 @@ func main() {
 
 	r.Post("/cars", app.createCarHandler)
 	r.Get("/cars/{id}", app.getCarHandler)
+
+	r.Post("/ereader", app.createEReaderHandler)
+	r.Get("/ereader/{id}", app.getEReaderHandler)
 
 	log.Println("starting server on :8080")
 	if err := http.ListenAndServe(":8080", r); err != nil { // Start the server and log the error if such exists
@@ -72,6 +78,44 @@ type application struct {
 	storeFurniture furniture.Store
 	storeBike      bike.Store
 	storeCar       car.Store
+	storeEReader   ereader.Store
+}
+type CreateEReaderRequest struct {
+	Size string `json:"size"`
+}
+
+func (app *application) createEReaderHandler(w http.ResponseWriter, r *http.Request) {
+	var req CreateEReaderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	e, err := app.storeEReader.Create(req.Size)
+	if err != nil {
+		http.Error(w, "failed to create eReader", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(e)
+}
+
+func (app *application) getEReaderHandler(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	e, err := app.storeEReader.Get(id)
+	if err != nil {
+		if errors.Is(err, ereader.ErrNotFound) {
+			http.Error(w, "EReader not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get eReader", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(e)
 }
 
 type createJobRequest struct {
