@@ -3,6 +3,7 @@ package job
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,7 @@ type Processor interface {
 type WorkerPool struct {
 	jobs  <-chan *Job   // read-only end of the channel — workers only consume
 	store StatusUpdater // only needs to update status, not create/get
+	wg    sync.WaitGroup
 }
 
 func NewWorkerPool(jobs <-chan *Job, store StatusUpdater) *WorkerPool {
@@ -28,11 +30,13 @@ func NewWorkerPool(jobs <-chan *Job, store StatusUpdater) *WorkerPool {
 // The goroutines run in the background until ctx is canceled.
 func (wp *WorkerPool) LaunchRoutines(n int) {
 	for i := range n {
+		wp.wg.Add(1)
 		go wp.runWorker(i)
 	}
 }
 
 func (wp *WorkerPool) runWorker(id int) {
+	defer wp.wg.Done()
 	for j := range wp.jobs {
 		log.Printf("worker %d: picked up job %s (%s)", id, j.ID, j.Payload)
 		time.Sleep(10 * time.Second) // pretend to do work
@@ -44,4 +48,8 @@ func (wp *WorkerPool) runWorker(id int) {
 
 		log.Printf("worker %d: finished job %s", id, j.ID)
 	}
+}
+
+func (wp *WorkerPool) Wait() {
+	wp.wg.Wait()
 }
