@@ -38,7 +38,7 @@ func main() {
 
 	r.Get("/healthz", healthHandler)      // On /healthz call healthHandler, this time specifically for GET requests
 	r.Post("/jobs", app.createJobHandler) // On /jobs call app.createJobHandler
-	r.Get("/jobs/", app.getAllJobsHandler)
+	r.Get("/jobs", app.getAllJobsHandler)
 	r.Get("/jobs/{id}", app.getJobHandler)
 
 	log.Println("starting server on :8080")
