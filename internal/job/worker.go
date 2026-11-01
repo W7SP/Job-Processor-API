@@ -27,7 +27,7 @@ func NewWorkerPool(jobs <-chan *Job, store StatusUpdater) *WorkerPool {
 }
 
 // LaunchRoutines launches n goroutines. Now they are waiting to start working the moment there is a job in the channel.
-// The goroutines run in the background until ctx is canceled.
+// Workers exit after the jobs channel is closed and its queued jobs are processed.
 func (wp *WorkerPool) LaunchRoutines(n int) {
 	for i := range n {
 		wp.wg.Add(1)
@@ -42,14 +42,15 @@ func (wp *WorkerPool) runWorker(id int) {
 		time.Sleep(10 * time.Second) // pretend to do work
 		err := wp.store.UpdateStatus(j.ID, "done")
 		if err != nil {
-			log.Printf("OOPSY DAISYY %v", err)
-			return
+			log.Printf("worker %d: failed to update job %s: %v", id, j.ID, err)
+			continue
 		}
 
 		log.Printf("worker %d: finished job %s", id, j.ID)
 	}
 }
 
+// Wait blocks until all launched workers have exited. Close the jobs channel first.
 func (wp *WorkerPool) Wait() {
 	wp.wg.Wait()
 }
