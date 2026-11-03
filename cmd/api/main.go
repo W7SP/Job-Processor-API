@@ -22,13 +22,13 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	store := job.NewMemoryStore()
-	jobChannel := make(chan *job.Job, 10)
+	jobChannel := make(chan *job.Job, 3)
 	// jobChan is the channel connecting handlers to workers.
 	// Buffer of 10 means: up to 10 jobs can be waiting
 	// without a worker ready, before the channel blocks.
 
 	// Create the pool and set up 3 workers.
-	pool := job.NewWorkerPool(jobChannel, store)
+	pool := job.NewWorkerPool(jobChannel, store, &job.SimulatedProcessor{})
 	pool.LaunchRoutines(3)
 
 	app := &application{

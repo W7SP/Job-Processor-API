@@ -55,7 +55,9 @@ func (s *MemoryStore) Create(payload string) (*Job, error) {
 	}
 	s.jobs[j.ID] = j
 	log.Printf("CREATE JOBS: %v", s.jobs)
-	return j, nil
+	// Return a snapshot so callers cannot access the stored job after unlocking.
+	copy := *j
+	return &copy, nil
 }
 
 func (s *MemoryStore) Get(id string) (*Job, error) {
@@ -66,14 +68,21 @@ func (s *MemoryStore) Get(id string) (*Job, error) {
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return j, nil
+	copy := *j
+	return &copy, nil
 }
 
 func (s *MemoryStore) GetAll() (map[string]*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.jobs, nil
+	// Copy both the map and its jobs; copying just the map would share pointers.
+	jobs := make(map[string]*Job, len(s.jobs))
+	for id, j := range s.jobs {
+		copy := *j
+		jobs[id] = &copy
+	}
+	return jobs, nil
 }
 
 // UpdateStatus ASK IF I CAN USE THE GET METHOD INSUDE UPDATESTATUS INSTEAD OF JUST MANUALLY GETTING FORM THE MAP
