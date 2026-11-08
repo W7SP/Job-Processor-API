@@ -41,25 +41,29 @@ func (wp *WorkerPool) runWorker(id int) {
 	for j := range wp.jobs {
 		log.Printf("worker %d: picked up job %s (%s)", id, j.ID, j.Payload)
 		// Pick a job from the channel and change its status to running
-		if err := wp.store.UpdateStatus(j.ID, "running"); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := wp.store.UpdateStatus(ctx, j.ID, "running")
+		cancel()
+		if err != nil { // pass context here
 			log.Printf("worker %d: failed to start job %s: %v", id, j.ID, err)
 			continue
 		}
 
 		// Each job gets its own timeout, starting when processing begins.
 		// Create a context with timeout after 10 seconds
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 		// Attempt to update the status (nil=done / error or expired context=failed)
-		err := wp.processor.Process(ctx, j)
-		cancel() // Release the timer now, rather than when this worker exits.
+		err = wp.processor.Process(ctx, j)
+		cancel()                            // Release the timer now, rather than when this worker exits.
 
 		status := "done"
 		if err != nil { // check if the process returned an error (not nil)
 			status = "failed"
 			log.Printf("worker %d: job %s failed: %v", id, j.ID, err)
 		}
-
-		err = wp.store.UpdateStatus(j.ID, status)
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		err = wp.store.UpdateStatus(ctx, j.ID, status)
+		cancel()
 		if err != nil {
 			log.Printf("worker %d: failed to update job %s: %v", id, j.ID, err)
 			continue

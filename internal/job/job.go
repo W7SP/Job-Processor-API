@@ -1,6 +1,7 @@
 package job
 
 import (
+	"context"
 	"errors"
 	"log"
 	"sync"
@@ -33,7 +34,7 @@ type Store interface {
 // Kept separate from Store deliberately — HTTP handlers never need this,
 // only workers do. Each consumer sees exactly the surface it needs.
 type StatusUpdater interface {
-	UpdateStatus(id string, status string) error
+	UpdateStatus(ctx context.Context, id string, status string) error
 }
 
 // MemoryStore is an in-memory implementation of Store, safe for concurrent use.
@@ -86,7 +87,7 @@ func (s *MemoryStore) GetAll() (map[string]*Job, error) {
 }
 
 // UpdateStatus ASK IF I CAN USE THE GET METHOD INSUDE UPDATESTATUS INSTEAD OF JUST MANUALLY GETTING FORM THE MAP
-func (s *MemoryStore) UpdateStatus(id string, status string) error {
+func (s *MemoryStore) UpdateStatus(ctx context.Context, id string, status string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	j, ok := s.jobs[id]
