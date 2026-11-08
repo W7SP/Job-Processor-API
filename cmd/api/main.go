@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log"
@@ -13,27 +14,56 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx as a database/sql driver.
 
 	"github.com/W7SP/Job-Processor-API/internal/job"
 )
 
 func main() {
+	// Before starting the project you need to set DATABASE_URL:
+	// $env:DATABASE_URL = 'postgres://postgres:pass123@localhost:5432/jobs_db?sslmode=disable'
+	// go run ./cmd/api
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		log.Fatal("DATABASE_URL must be set")
+	}
+
+	// Open creates a connection pool; PingContext checks that PostgreSQL is reachable.
+	db, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		log.Fatal("failed to open database")
+	}
+	defer db.Close()
+
+	connectCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	err = db.PingContext(connectCtx)
+	cancel()
+	if err != nil {
+		// Avoid logging the connection string, which contains the password.
+		log.Fatal("failed to connect to database; check DATABASE_URL and PostgreSQL")
+		// log.Fatal logs and exits, it does os.Exit(1)
+	}
+	log.Println("connected to PostgreSQL")
+
 	// Ctrl+C (local development) or SIGTERM (containers) starts shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-
-	store := job.NewMemoryStore()
+	postgresStore := job.NewPostgresStore(db)
+	//store := job.NewMemoryStore()
 	jobChannel := make(chan *job.Job, 3)
 	// jobChan is the channel connecting handlers to workers.
 	// Buffer of 10 means: up to 10 jobs can be waiting
 	// without a worker ready, before the channel blocks.
 
 	// Create the pool and set up 3 workers.
-	pool := job.NewWorkerPool(jobChannel, store, &job.SimulatedProcessor{})
+	//pool := job.NewWorkerPool(jobChannel, store, &job.SimulatedProcessor{})
+	pool := job.NewWorkerPool(jobChannel, postgresStore, &job.SimulatedProcessor{})
+
 	pool.LaunchRoutines(3)
 
 	app := &application{
-		store:   store,
-		jobChan: jobChannel,
+		//store:     store,
+		jobStore: postgresStore,
+		jobChan:  jobChannel,
 	}
 
 	// Creates a router (urls,py)
@@ -93,9 +123,16 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
+type jobStore interface {
+	Get(ctx context.Context, id string) (*job.Job, error)
+	GetAll(ctx context.Context) (map[string]*job.Job, error)
+	Create(ctx context.Context, payload string) (*job.Job, error)
+}
+
 type application struct {
-	store   job.Store
-	jobChan chan *job.Job
+	//store     job.Store
+	jobStore jobStore
+	jobChan  chan *job.Job
 }
 type createJobRequest struct {
 	Payload string `json:"payload"`
@@ -113,15 +150,15 @@ func (app *application) createJobHandler(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
-
-	j, err := app.store.Create(req.Payload)
+	j, err := app.jobStore.Create(r.Context(), req.Payload)
+	//j, err := app.store.Create(req.Payload) // Here we need to provide context as well? Otherwise the rest is the same?
 	if err != nil {
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
 
 	// Queue the job. This blocks while the channel's ten slots are full.
-	app.jobChan <- j
+	app.jobChan <- j // This continues the same?
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(j)
@@ -130,7 +167,7 @@ func (app *application) createJobHandler(w http.ResponseWriter, r *http.Request)
 func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	j, err := app.store.Get(id)
+	j, err := app.jobStore.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			http.Error(w, "job not found", http.StatusNotFound)
@@ -145,7 +182,7 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *application) getAllJobsHandler(w http.ResponseWriter, r *http.Request) {
-	jobs, err := app.store.GetAll()
+	jobs, err := app.jobStore.GetAll(r.Context())
 	if err != nil {
 		http.Error(w, "failed to get jobs", http.StatusInternalServerError)
 		return
