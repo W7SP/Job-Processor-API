@@ -21,9 +21,15 @@ type Job struct {
 // We can use errors.Is and check if the error message that we get contains error of type ErrNotFound
 var ErrNotFound = errors.New("job not found")
 
+type Store interface {
+	Get(ctx context.Context, id string) (*Job, error)
+	GetAll(ctx context.Context) (map[string]*Job, error)
+	Create(ctx context.Context, payload string) (*Job, error)
+}
+
 // Store defines what any job storage backend must support.
 // Basically the backend that will work with Jobs MUST be able to create and get a job
-type Store interface {
+type InMemoryStore interface {
 	Create(payload string) (*Job, error)
 	Get(id string) (*Job, error)
 	GetAll() (map[string]*Job, error)

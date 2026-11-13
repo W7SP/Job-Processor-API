@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/W7SP/Job-Processor-API/internal/bike"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx as a database/sql driver.
@@ -48,8 +49,10 @@ func main() {
 	// Ctrl+C (local development) or SIGTERM (containers) starts shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	postgresStore := job.NewPostgresStore(db)
+	bikesPostgresStore := bike.NewPostgresStore(db)
 	//store := job.NewMemoryStore()
 	jobChannel := make(chan *job.Job, 3)
+	bikeChannel := make(chan *bike.Bike, 3)
 	// jobChan is the channel connecting handlers to workers.
 	// Buffer of 10 means: up to 10 jobs can be waiting
 	// without a worker ready, before the channel blocks.
@@ -57,13 +60,16 @@ func main() {
 	// Create the pool and set up 3 workers.
 	//pool := job.NewWorkerPool(jobChannel, store, &job.SimulatedProcessor{})
 	pool := job.NewWorkerPool(jobChannel, postgresStore, &job.SimulatedProcessor{})
-
+	bikePool := bike.NewWorkerPool(bikeChannel, bikesPostgresStore)
 	pool.LaunchRoutines(3)
+	bikePool.LaunchRoutines(3)
 
 	app := &application{
 		//store:     store,
-		jobStore: postgresStore,
-		jobChan:  jobChannel,
+		jobStore:  postgresStore,
+		bikeStore: bikesPostgresStore,
+		jobChan:   jobChannel,
+		bikeChan:  bikeChannel,
 	}
 
 	// Creates a router (urls,py)
@@ -78,6 +84,11 @@ func main() {
 	r.Post("/jobs", app.createJobHandler) // On /jobs call app.createJobHandler
 	r.Get("/jobs", app.getAllJobsHandler)
 	r.Get("/jobs/{id}", app.getJobHandler)
+
+	r.Post("/bikes", app.createBikeHandler) // On /jobs call app.createJobHandler
+	r.Get("/bikes", app.getAllBikesHandler)
+	r.Get("/bikes/{id}", app.getBikeHandler)
+	r.Delete("/bikes", app.deleteBikesHandler)
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -113,8 +124,10 @@ func main() {
 
 	// Shutdown succeeded: no HTTP handlers can send more jobs.
 	close(jobChannel)
+	close(bikeChannel)
 	log.Println("waiting for workers to finish queued jobs")
 	pool.Wait()
+	bikePool.Wait()
 	log.Println("shutdown complete")
 }
 
@@ -123,24 +136,77 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-type jobStore interface {
-	Get(ctx context.Context, id string) (*job.Job, error)
-	GetAll(ctx context.Context) (map[string]*job.Job, error)
-	Create(ctx context.Context, payload string) (*job.Job, error)
-}
-
 type application struct {
 	//store     job.Store
-	jobStore jobStore
-	jobChan  chan *job.Job
+	jobStore  job.Store
+	bikeStore bike.Store
+	jobChan   chan *job.Job
+	bikeChan  chan *bike.Bike
 }
-type createJobRequest struct {
-	Payload string `json:"payload"`
+
+type createBikeRequest struct {
+	BikeType string `json:"bike_type"`
+}
+
+func (app *application) deleteBikesHandler(w http.ResponseWriter, r *http.Request) {
+	err := app.bikeStore.DeleteAll(r.Context())
+	if err != nil {
+		log.Printf("deleteBikesHandler: %v", err)
+		http.Error(w, "failed to delete bikes", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // application Why create this? Why not a global store?
 // Because later you can test with an application with a mocked store
 // Also application has methods that you know depend on its fields
+func (app *application) createBikeHandler(w http.ResponseWriter, r *http.Request) {
+	var req createBikeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	b, err := app.bikeStore.Create(r.Context(), req.BikeType)
+	if err != nil {
+		http.Error(w, "failed to create bike", http.StatusInternalServerError)
+		return
+	}
+	app.bikeChan <- b
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(b)
+}
+
+func (app *application) getAllBikesHandler(w http.ResponseWriter, r *http.Request) {
+	bikes, err := app.bikeStore.GetAll(r.Context())
+	if err != nil {
+		http.Error(w, "failed to get bikes", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(bikes)
+}
+
+func (app *application) getBikeHandler(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	b, err := app.bikeStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, bike.ErrNotFound) {
+			http.Error(w, "bike not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get bike", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(b)
+
+}
+
+type createJobRequest struct {
+	Payload string `json:"payload"`
+}
 
 // createJobHandler Notice this receives the same things as a normal view BUT
 // Now it also has access to the fields of application (store)
