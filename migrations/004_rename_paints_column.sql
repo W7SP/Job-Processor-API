@@ -1,0 +1,1 @@
+ALTER TABLE paints RENAME COLUMN build_status TO prepared;

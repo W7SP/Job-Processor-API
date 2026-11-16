@@ -27,7 +27,9 @@ func main() {
 	// go run ./cmd/api
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL must be set")
+		databaseURL = "postgres://postgres:pass123@localhost:5432/jobs_db?sslmode=disable"
+		log.Println("DATABASE_URL set manually")
+		//log.Fatal("DATABASE_URL must be set")
 	}
 
 	// Open creates a connection pool; PingContext checks that PostgreSQL is reachable.
@@ -52,10 +54,12 @@ func main() {
 	postgresStore := job.NewPostgresStore(db)
 	bikesPostgresStore := bike.NewPostgresStore(db)
 	paintPostgresStore := paint.NewPostgresStore(db)
+
 	//store := job.NewMemoryStore()
 	jobChannel := make(chan *job.Job, 3)
 	bikeChannel := make(chan *bike.Bike, 3)
 	paintChannel := make(chan *paint.Paint, 3)
+
 	// jobChan is the channel connecting handlers to workers.
 	// Buffer of 10 means: up to 10 jobs can be waiting
 	// without a worker ready, before the channel blocks.
@@ -69,14 +73,14 @@ func main() {
 	pool.LaunchRoutines(3)
 	bikePool.LaunchRoutines(3)
 
-	app := &application{
-		//store:     store,
-		jobStore:  postgresStore,
-		bikeStore: bikesPostgresStore,
-		jobChan:   jobChannel,
-		bikeChan:  bikeChannel,
-		paintChan: paintChannel,
-	}
+	app := createApplication(
+		postgresStore,
+		bikesPostgresStore,
+		paintPostgresStore,
+		jobChannel,
+		bikeChannel,
+		paintChannel,
+	)
 
 	// Creates a router (urls,py)
 	r := chi.NewRouter()
@@ -159,14 +163,31 @@ type application struct {
 	paintChan  chan *paint.Paint
 }
 
-type paintRequest struct {
+func createApplication(
+	jobStore job.Store,
+	bikeStore bike.Store,
+	paintStore paint.Store,
+	jobChan chan *job.Job,
+	bikeChan chan *bike.Bike,
+	paintChan chan *paint.Paint,
+) *application {
+	return &application{
+		jobStore:   jobStore,
+		bikeStore:  bikeStore,
+		paintStore: paintStore,
+		jobChan:    jobChan,
+		bikeChan:   bikeChan,
+		paintChan:  paintChan,
+	}
+}
+
+type createPaintRequest struct {
 	Color string `json:"color"`
 }
 
 func (app *application) createPaintHandler(w http.ResponseWriter, r *http.Request) {
-	var req paintRequest
-	err := json.NewDecoder(r.Body).Decode(&req)
-	if err != nil {
+	var req createPaintRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}

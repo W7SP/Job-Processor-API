@@ -51,7 +51,7 @@ func (ps *PostgresStore) Get(ctx context.Context, id string) (*Paint, error) {
 }
 
 func (ps *PostgresStore) GetAll(ctx context.Context) (map[string]*Paint, error) {
-	var paints map[string]*Paint
+	paints := make(map[string]*Paint)
 	rows, err := ps.db.QueryContext(ctx, `SELECT id, color, prepared FROM paints`)
 	if err != nil {
 		return nil, fmt.Errorf("query jobs: %w", err)
