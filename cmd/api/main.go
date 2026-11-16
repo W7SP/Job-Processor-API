@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/W7SP/Job-Processor-API/internal/bike"
+	"github.com/W7SP/Job-Processor-API/internal/paint"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx as a database/sql driver.
@@ -50,9 +51,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	postgresStore := job.NewPostgresStore(db)
 	bikesPostgresStore := bike.NewPostgresStore(db)
+	paintPostgresStore := paint.NewPostgresStore(db)
 	//store := job.NewMemoryStore()
 	jobChannel := make(chan *job.Job, 3)
 	bikeChannel := make(chan *bike.Bike, 3)
+	paintChannel := make(chan *paint.Paint, 3)
 	// jobChan is the channel connecting handlers to workers.
 	// Buffer of 10 means: up to 10 jobs can be waiting
 	// without a worker ready, before the channel blocks.
@@ -61,6 +64,8 @@ func main() {
 	//pool := job.NewWorkerPool(jobChannel, store, &job.SimulatedProcessor{})
 	pool := job.NewWorkerPool(jobChannel, postgresStore, &job.SimulatedProcessor{})
 	bikePool := bike.NewWorkerPool(bikeChannel, bikesPostgresStore)
+	paintPool := paint.NewWorkerPool(paintChannel, paintPostgresStore)
+	paintPool.LaunchRoutines(3)
 	pool.LaunchRoutines(3)
 	bikePool.LaunchRoutines(3)
 
@@ -70,6 +75,7 @@ func main() {
 		bikeStore: bikesPostgresStore,
 		jobChan:   jobChannel,
 		bikeChan:  bikeChannel,
+		paintChan: paintChannel,
 	}
 
 	// Creates a router (urls,py)
@@ -89,6 +95,11 @@ func main() {
 	r.Get("/bikes", app.getAllBikesHandler)
 	r.Get("/bikes/{id}", app.getBikeHandler)
 	r.Delete("/bikes", app.deleteBikesHandler)
+
+	r.Post("/paints", app.createPaintHandler) // On /jobs call app.createJobHandler
+	r.Get("/paints", app.getAllPaintsHandler)
+	r.Get("/paints/{id}", app.getPaintHandler)
+	r.Delete("/paints", app.deletePaintsHandler)
 
 	server := &http.Server{
 		Addr:              ":8080",
@@ -125,9 +136,11 @@ func main() {
 	// Shutdown succeeded: no HTTP handlers can send more jobs.
 	close(jobChannel)
 	close(bikeChannel)
+	close(paintChannel)
 	log.Println("waiting for workers to finish queued jobs")
 	pool.Wait()
 	bikePool.Wait()
+	paintPool.Wait()
 	log.Println("shutdown complete")
 }
 
@@ -138,10 +151,69 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 type application struct {
 	//store     job.Store
-	jobStore  job.Store
-	bikeStore bike.Store
-	jobChan   chan *job.Job
-	bikeChan  chan *bike.Bike
+	jobStore   job.Store
+	jobChan    chan *job.Job
+	bikeStore  bike.Store
+	bikeChan   chan *bike.Bike
+	paintStore paint.Store
+	paintChan  chan *paint.Paint
+}
+
+type paintRequest struct {
+	Color string `json:"color"`
+}
+
+func (app *application) createPaintHandler(w http.ResponseWriter, r *http.Request) {
+	var req paintRequest
+	err := json.NewDecoder(r.Body).Decode(&req)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	p, err := app.paintStore.Create(r.Context(), req.Color)
+	if err != nil {
+		http.Error(w, "failed to create paint", http.StatusInternalServerError)
+		return
+	}
+	app.paintChan <- p
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(p)
+}
+
+func (app *application) getPaintHandler(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	p, err := app.paintStore.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, paint.ErrNotFound) {
+			http.Error(w, "paint not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to get paint", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(p)
+}
+
+func (app *application) getAllPaintsHandler(w http.ResponseWriter, r *http.Request) {
+	paints, err := app.paintStore.GetAll(r.Context())
+	if err != nil {
+		http.Error(w, "failed to get paints", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(paints)
+}
+
+func (app *application) deletePaintsHandler(w http.ResponseWriter, r *http.Request) {
+	err := app.paintStore.DeleteAll(r.Context())
+	if err != nil {
+		log.Printf("deletePaintsHandler: %v", err)
+		http.Error(w, "failed to delete paints", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type createBikeRequest struct {
