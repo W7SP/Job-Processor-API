@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib" // Register pgx as a database/sql driver.
 
 	"github.com/W7SP/Job-Processor-API/internal/job"
@@ -166,6 +167,10 @@ func (app *application) createJobHandler(w http.ResponseWriter, r *http.Request)
 
 func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "invalid job ID: must be a UUID", http.StatusBadRequest)
+		return
+	}
 
 	j, err := app.jobStore.Get(r.Context(), id)
 	if err != nil {
