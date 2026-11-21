@@ -24,9 +24,9 @@ var ErrNotFound = errors.New("job not found")
 // Store defines what any job storage backend must support.
 // Basically the backend that will work with Jobs MUST be able to create and get a job
 type Store interface {
-	Create(payload string) (*Job, error)
-	Get(id string) (*Job, error)
-	GetAll() (map[string]*Job, error)
+	Create(ctx context.Context, payload string) (*Job, error)
+	Get(ctx context.Context, id string) (*Job, error)
+	GetAll(ctx context.Context) (map[string]*Job, error)
 } // Why not UPDATE and DELETE? Cuz being explicit and specific is cool
 // The bigger the interface, the weaker the abstraction
 
@@ -45,7 +45,7 @@ type MemoryStore struct {
 	jobs map[string]*Job
 }
 
-func (s *MemoryStore) Create(payload string) (*Job, error) {
+func (s *MemoryStore) Create(ctx context.Context, payload string) (*Job, error) {
 	s.mu.Lock()         // Locks the jobs map
 	defer s.mu.Unlock() // Unlocks the jobs map before the func returns
 
@@ -61,7 +61,7 @@ func (s *MemoryStore) Create(payload string) (*Job, error) {
 	return &copy, nil
 }
 
-func (s *MemoryStore) Get(id string) (*Job, error) {
+func (s *MemoryStore) Get(ctx context.Context, id string) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -73,7 +73,7 @@ func (s *MemoryStore) Get(id string) (*Job, error) {
 	return &copy, nil
 }
 
-func (s *MemoryStore) GetAll() (map[string]*Job, error) {
+func (s *MemoryStore) GetAll(ctx context.Context) (map[string]*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

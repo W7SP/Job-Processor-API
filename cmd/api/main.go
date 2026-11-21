@@ -124,15 +124,9 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("ok"))
 }
 
-type jobStore interface {
-	Get(ctx context.Context, id string) (*job.Job, error)
-	GetAll(ctx context.Context) (map[string]*job.Job, error)
-	Create(ctx context.Context, payload string) (*job.Job, error)
-}
-
 type application struct {
 	//store     job.Store
-	jobStore jobStore
+	jobStore job.Store
 	jobChan  chan *job.Job
 }
 type createJobRequest struct {

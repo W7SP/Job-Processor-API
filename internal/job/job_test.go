@@ -8,7 +8,7 @@ import (
 func TestMemoryStore_CreateAndGet(t *testing.T) {
 	store := NewMemoryStore()
 
-	created, err := store.Create("resize-image")
+	created, err := store.Create(t.Context(), "resize-image")
 	if err != nil {
 		t.Fatalf("unexpected error on Create: %v", err) // This stops the test and fails here
 	}
@@ -21,7 +21,7 @@ func TestMemoryStore_CreateAndGet(t *testing.T) {
 		t.Errorf("expected payload %q, got %q", "resize-image", created.Payload) // This records the fail but continues, then still fails the test
 	}
 
-	fetched, err := store.Get(created.ID)
+	fetched, err := store.Get(t.Context(), created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error on Get: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestMemoryStore_CreateAndGet(t *testing.T) {
 func TestMemoryStore_GetNotFound(t *testing.T) {
 	store := NewMemoryStore()
 
-	_, err := store.Get("does-not-exist")
+	_, err := store.Get(t.Context(), "does-not-exist")
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
@@ -42,17 +42,17 @@ func TestMemoryStore_GetNotFound(t *testing.T) {
 
 func TestMemoryStore_UpdateStatus(t *testing.T) {
 	store := NewMemoryStore()
-	j, err := store.Create("resize-image")
+	j, err := store.Create(t.Context(), "resize-image")
 	if err != nil {
 		t.Fatalf("unexpected error on Create: %v", err)
 	}
 
-	errFromUpdate := store.UpdateStatus(j.ID, "running")
+	errFromUpdate := store.UpdateStatus(t.Context(), j.ID, "running")
 	if errFromUpdate != nil {
 		t.Fatalf("unexpected error on Update: %v", err)
 	}
 
-	updated, err := store.Get(j.ID)
+	updated, err := store.Get(t.Context(), j.ID)
 	if err != nil {
 		t.Fatalf("unexpected error on Get: %v", err)
 	}
@@ -66,14 +66,14 @@ func TestMemoryStore_UpdateStatus(t *testing.T) {
 
 func TestMemoryStore_ReturnedJobsAreIndependent(t *testing.T) {
 	store := NewMemoryStore()
-	created, err := store.Create("original")
+	created, err := store.Create(t.Context(), "original")
 	if err != nil {
 		t.Fatal(err)
 	}
 	id := created.ID
 	created.Payload = "changed through Create"
 
-	fetched, err := store.Get(id)
+	fetched, err := store.Get(t.Context(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestMemoryStore_ReturnedJobsAreIndependent(t *testing.T) {
 	}
 	fetched.Payload = "changed through Get"
 
-	all, err := store.GetAll()
+	all, err := store.GetAll(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestMemoryStore_ReturnedJobsAreIndependent(t *testing.T) {
 	all[id].Payload = "changed through GetAll"
 	delete(all, id)
 
-	fetched, err = store.Get(id)
+	fetched, err = store.Get(t.Context(), id)
 	if err != nil {
 		t.Fatalf("changing the returned map removed the stored job: %v", err)
 	}
