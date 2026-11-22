@@ -153,7 +153,13 @@ func (app *application) createJobHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Queue the job. This blocks while the channel's ten slots are full.
-	app.jobChan <- j // This continues the same?
+	select {
+	case app.jobChan <- j: // queued, carry on
+	case <-r.Context().Done(): // client left before there was room
+		log.Printf("job %s created but not queued: %v", j.ID, r.Context().Err())
+		http.Error(w, "server busy, try again", http.StatusServiceUnavailable)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(j)

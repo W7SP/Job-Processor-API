@@ -2,108 +2,51 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/W7SP/Job-Processor-API/internal/job"
-	"github.com/W7SP/Job-Processor-API/internal/task"
 	"github.com/go-chi/chi/v5"
 )
 
 // fakeStore is a test-only implementation of job.Store.
 // It satisfies the interface just like MemoryStore does, but lets us
 // control exactly what it returns — no randomness, no real storage.
+// Go checks interfaces by method signature, so every method of job.Store
+// (including GetAll and the ctx parameters) must exist here.
 type fakeStore struct {
-	createFunc func(payload string) (*job.Job, error)
-	getFunc    func(id string) (*job.Job, error)
+	createFunc func(ctx context.Context, payload string) (*job.Job, error)
+	getFunc    func(ctx context.Context, id string) (*job.Job, error)
 }
 
-func (f *fakeStore) Create(payload string) (*job.Job, error) {
-	return f.createFunc(payload)
+func (f *fakeStore) Create(ctx context.Context, payload string) (*job.Job, error) {
+	return f.createFunc(ctx, payload)
 }
 
-func (f *fakeStore) Get(id string) (*job.Job, error) {
-	return f.getFunc(id)
+func (f *fakeStore) Get(ctx context.Context, id string) (*job.Job, error) {
+	return f.getFunc(ctx, id)
 }
 
-type fakeTaskStore struct {
-	createFunc func(action string) (*task.Task, error)
-	getFunc    func(id string) (*task.Task, error)
-}
-
-func (f *fakeTaskStore) Create(action string) (*task.Task, error) {
-	return f.createFunc(action)
-}
-
-func (f *fakeTaskStore) Get(id string) (*task.Task, error) {
-	return f.getFunc(id)
-}
-
-func TestCreateTaskHandler_Success(t *testing.T) {
-	app := &application{
-		storeTasks: &fakeTaskStore{
-			createFunc: func(action string) (*task.Task, error) {
-				return &task.Task{ID: "fixed-id", Action: action, Status: "pending"}, nil
-			},
-		},
-	}
-
-	body := bytes.NewBufferString(`{"action":"create"}`)
-	req := httptest.NewRequest(http.MethodPost, "/tasks", body)
-	rec := httptest.NewRecorder()
-
-	app.createTaskHandler(rec, req)
-
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected status %d, got %d", http.StatusCreated, rec.Code)
-	}
-	var got task.Task
-	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
-		t.Fatalf("failed to decode response body: %v", err)
-	}
-	if got.ID != "fixed-id" {
-		t.Errorf("expected ID %q, got %q", "fixed-id", got.ID)
-	}
-}
-
-func TestGetTaskHandler_NotFound(t *testing.T) {
-	var receivedID string
-
-	app := &application{
-		storeTasks: &fakeTaskStore{
-			getFunc: func(id string) (*task.Task, error) {
-				receivedID = id
-				return nil, task.ErrNotFound
-			},
-		},
-	}
-
-	r := chi.NewRouter()
-	r.Get("/tasks/{id}", app.getTaskHandler)
-
-	req := httptest.NewRequest(http.MethodGet, "/tasks/does-not-exist", nil)
-	rec := httptest.NewRecorder()
-
-	r.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
-	}
-
-	if receivedID != "does-not-exist" {
-		t.Errorf("expected handler to receive id %q, got %q", "does-not-exist", receivedID)
-	}
+// GetAll isn't tested yet, but the fake must have it to satisfy job.Store.
+func (f *fakeStore) GetAll(ctx context.Context) (map[string]*job.Job, error) {
+	return nil, nil
 }
 
 func TestCreateJobHandler_Success(t *testing.T) {
+	// The handler does app.jobChan <- j. Sending on a nil channel blocks
+	// forever, so the test needs a real (buffered) channel.
+	jobChan := make(chan *job.Job, 1)
+
 	app := &application{
-		store: &fakeStore{
-			createFunc: func(payload string) (*job.Job, error) {
+		jobStore: &fakeStore{
+			createFunc: func(ctx context.Context, payload string) (*job.Job, error) {
 				return &job.Job{ID: "fixed-id", Status: "pending", Payload: payload}, nil
 			},
 		},
+		jobChan: jobChan,
 	}
 
 	body := bytes.NewBufferString(`{"payload":"resize-image"}`)
@@ -124,68 +67,124 @@ func TestCreateJobHandler_Success(t *testing.T) {
 	if got.ID != "fixed-id" {
 		t.Errorf("expected ID %q, got %q", "fixed-id", got.ID)
 	}
+
+	// Check that the handler really handed the job to the workers.
+	select {
+	case queued := <-jobChan:
+		if queued.ID != "fixed-id" {
+			t.Errorf("queued wrong job: %q", queued.ID)
+		}
+	default:
+		t.Fatal("expected the job to be queued for the workers")
+	}
 }
 
-// An example of a fake passing test
-func TestGetJobHandler_NotFound_IMPROPER(t *testing.T) {
-	var receivedID string
-
-	app := &application{
-		store: &fakeStore{
-			getFunc: func(id string) (*job.Job, error) { // Add a functionality to getFunc, it is called when Store.Get is called
-				receivedID = id // This is to check what exactly ID are we using, chi WILL NOT parse this
-				return nil, job.ErrNotFound
-			},
-		},
-	}
-
-	// Create request towards /jobs/does-not-exist with an empty body
-	req := httptest.NewRequest(http.MethodGet, "/jobs/does-not-exist", nil)
-	rec := httptest.NewRecorder() // In memory server
-
-	app.getJobHandler(rec, req) // Send the request
-
-	if rec.Code != http.StatusNotFound {
-		// We will receive this error bacause our ID is "", so same result as a wrong ID, so the test is not proper
-		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
-	}
-
-	t.Logf("IMPROPER id received by store.Get: %q", receivedID)
-}
-
+// IMPORTANT: handlers that use chi.URLParam must be called through a chi router.
+// If you call app.getJobHandler(rec, req) directly, chi never parsed the URL,
+// so the id is "" and the test doesn't test what you think it tests.
 func TestGetJobHandler_NotFound(t *testing.T) {
+	// Must be a valid UUID, otherwise the handler returns 400 before reaching the store.
+	const missingID = "11111111-1111-1111-1111-111111111111"
 	var receivedID string
 
 	app := &application{
-		store: &fakeStore{
-			getFunc: func(id string) (*job.Job, error) { // This is called when Store.Get is called in the handler (view)
+		jobStore: &fakeStore{
+			getFunc: func(ctx context.Context, id string) (*job.Job, error) { // Called when Store.Get is called in the handler
 				receivedID = id
 				return nil, job.ErrNotFound
 			},
 		},
 	}
 
-	r := chi.NewRouter()                   // We use an actual chi router so that we can actually parse the ID in getJobHandler
-	r.Get("/jobs/{id}", app.getJobHandler) // This is registration
-	// It does NOT create a request it says on /jobs/{id} call app.getJobHandler
+	r := chi.NewRouter()                   // A real chi router, so the {id} in the URL is actually parsed
+	r.Get("/jobs/{id}", app.getJobHandler) // Registration only: "on /jobs/{id} call getJobHandler"
 
-	req := httptest.NewRequest(http.MethodGet, "/jobs/does-not-exist", nil) // This is the request (in memory)
+	req := httptest.NewRequest(http.MethodGet, "/jobs/"+missingID, nil) // The in-memory request
 	rec := httptest.NewRecorder()
 
-	r.ServeHTTP(rec, req) // route it through chi, not calling the handler directly
-	/*
-		This is where matching actually happens: chi takes the request from step 2,
-		Walks through all the rules registered in step 1,
-		Finds that /jobs/does-not-exist matches the pattern /jobs/{id}
-		Extracts "does-not-exist" as the value for id, attaches that captured value onto the request
-	*/
+	r.ServeHTTP(rec, req) // chi matches the URL, extracts id, then calls the handler
+
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
 	}
 
-	t.Logf("id received by store.Get: %q", receivedID)
-
-	if receivedID != "does-not-exist" {
-		t.Errorf("expected handler to receive id %q, got %q", "does-not-exist", receivedID)
+	if receivedID != missingID {
+		t.Errorf("expected handler to receive id %q, got %q", missingID, receivedID)
 	}
 }
+
+func TestGetJobHandler_InvalidID(t *testing.T) {
+	// The empty fakeStore is deliberate: if the handler ever reached the store
+	// with a bad ID, getFunc would be nil and the test would panic,
+	// telling us the UUID validation broke.
+	app := &application{jobStore: &fakeStore{}}
+
+	r := chi.NewRouter()
+	r.Get("/jobs/{id}", app.getJobHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs/not-a-uuid", nil)
+	rec := httptest.NewRecorder()
+
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestCreateJobHandler_ClientGoneWhileQueueFull(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background()) // Create a context
+
+	app := &application{ // Use the real application struct
+		jobStore: &fakeStore{ // Add a fake store instead of the actual
+			//  createFunc will be returned, when Create is called in createJobHandler (check fakeStore for more info)
+			createFunc: func(_ context.Context, payload string) (*job.Job, error) {
+				cancel() // the client disconnects right after the job is stored
+				return &job.Job{ID: "fixed-id", Status: "pending", Payload: payload}, nil // make an actual job (no postgres)
+			},
+		},
+		jobChan: make(chan *job.Job), // unbuffered, nobody reading so nothing will get in it (blocking)
+	}
+
+	// Build the request and send it with the context
+	req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(`{"payload":"x"}`)).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	// Here .Create() is called
+	// => executes createFunc (because fakeStore)
+	// => context is canceled and job is created
+	// => select statement is reached
+	// => case 1, nothing will be added to the jobChan cuz its blocking
+	// => case 2 is valid cuz context got canceled
+	app.createJobHandler(rec, req)
+	// !!! IMPORTANT !!! If context is canceled before Create() is called it will return err so if err != nil is true
+	// and we never reach the select => a job was created BUT not queued.
+
+	// assert what case 2 from select statement resulted
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}
+
+//func TestCreateJobHandler_ClientGoneWhileQueueFull(t *testing.T) {
+//	app := &application{
+//		jobStore: &fakeStore{
+//			createFunc: func(ctx context.Context, payload string) (*job.Job, error) {
+//				return &job.Job{ID: "fixed-id", Status: "pending", Payload: payload}, nil
+//			},
+//		},
+//		jobChan: make(chan *job.Job), // unbuffered and nobody reading: a send would block forever
+//	}
+//
+//	ctx, cancel := context.WithCancel(context.Background())
+//	cancel() // the client has already gone away
+//
+//	req := httptest.NewRequest(http.MethodPost, "/jobs", bytes.NewBufferString(`{"payload":"x"}`)).WithContext(ctx)
+//	rec := httptest.NewRecorder()
+//
+//	app.createJobHandler(rec, req)
+//
+//	if rec.Code != http.StatusServiceUnavailable {
+//		t.Errorf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+//	}
+//}
