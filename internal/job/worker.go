@@ -2,7 +2,7 @@ package job
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -39,13 +39,18 @@ func (wp *WorkerPool) LaunchRoutines(n int) {
 func (wp *WorkerPool) runWorker(id int) {
 	defer wp.wg.Done() // State that the worker finished (decrement wait group counter)
 	for j := range wp.jobs {
-		log.Printf("worker %d: picked up job %s (%s)", id, j.ID, j.Payload)
+		start := time.Now()
+		// A logger that already carries these two fields, so every line below
+		// gets "worker" and "job_id" without repeating them each time.
+		logger := slog.With("worker", id, "job_id", j.ID)
+		logger.Info("job picked up", "payload", j.Payload)
+
 		// Pick a job from the channel and change its status to running
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err := wp.store.UpdateStatus(ctx, j.ID, "running")
 		cancel()
-		if err != nil { // pass context here
-			log.Printf("worker %d: failed to start job %s: %v", id, j.ID, err)
+		if err != nil {
+			logger.Error("failed to mark job running", "error", err)
 			continue
 		}
 
@@ -54,22 +59,22 @@ func (wp *WorkerPool) runWorker(id int) {
 		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
 		// Attempt to update the status (nil=done / error or expired context=failed)
 		err = wp.processor.Process(ctx, j)
-		cancel()                            // Release the timer now, rather than when this worker exits.
+		cancel() // Release the timer now, rather than when this worker exits.
 
 		status := "done"
 		if err != nil { // check if the process returned an error (not nil)
 			status = "failed"
-			log.Printf("worker %d: job %s failed: %v", id, j.ID, err)
+			logger.Warn("job processing failed", "error", err)
 		}
 		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 		err = wp.store.UpdateStatus(ctx, j.ID, status)
 		cancel()
 		if err != nil {
-			log.Printf("worker %d: failed to update job %s: %v", id, j.ID, err)
+			logger.Error("failed to save final status", "status", status, "error", err)
 			continue
 		}
 
-		log.Printf("worker %d: finished job %s with status %s", id, j.ID, status)
+		logger.Info("job finished", "status", status, "duration_ms", time.Since(start).Milliseconds())
 	}
 }
 

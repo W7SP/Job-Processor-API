@@ -3,7 +3,7 @@ package job
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand"
 	"time"
 )
@@ -17,7 +17,7 @@ func (p *SimulatedProcessor) Process(ctx context.Context, j *Job) error {
 	// Create a duration between 1 and 5 seconds
 	duration := time.Duration(1+rand.Intn(5)) * time.Second
 
-	log.Printf("job %s: simulating %v of work", j.ID, duration)
+	slog.Info("simulating work", "job_id", j.ID, "duration_ms", duration.Milliseconds())
 
 	select {
 	case <-time.After(duration):

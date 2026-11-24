@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,18 +21,26 @@ import (
 )
 
 func main() {
+	// JSON logger writing to stdout (containers are expected to log to stdout).
+	// SetDefault makes the package-level slog.Info(...) calls use this logger.
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
+
 	// Before starting the project you need to set DATABASE_URL:
 	// $env:DATABASE_URL = 'postgres://postgres:pass123@localhost:5432/jobs_db?sslmode=disable'
 	// go run ./cmd/api
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
-		log.Fatal("DATABASE_URL must be set")
+		//databaseURL = "postgres://postgres:pass123@localhost:5432/jobs_db?sslmode=disable"
+		slog.Error("DATABASE_URL must be set")
+		os.Exit(1)
 	}
 
 	// Open creates a connection pool; PingContext checks that PostgreSQL is reachable.
 	db, err := sql.Open("pgx", databaseURL)
 	if err != nil {
-		log.Fatal("failed to open database")
+		slog.Error("failed to open database")
+		os.Exit(1)
 	}
 	defer db.Close()
 
@@ -41,10 +49,10 @@ func main() {
 	cancel()
 	if err != nil {
 		// Avoid logging the connection string, which contains the password.
-		log.Fatal("failed to connect to database; check DATABASE_URL and PostgreSQL")
-		// log.Fatal logs and exits, it does os.Exit(1)
+		slog.Error("failed to connect to database; check DATABASE_URL and PostgreSQL")
+		os.Exit(1) // slog has no Fatal: log the error, then exit ourselves
 	}
-	log.Println("connected to PostgreSQL")
+	slog.Info("connected to PostgreSQL")
 
 	// Ctrl+C (local development) or SIGTERM (containers) starts shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -52,7 +60,7 @@ func main() {
 	//store := job.NewMemoryStore()
 	jobChannel := make(chan *job.Job, 3)
 	// jobChan is the channel connecting handlers to workers.
-	// Buffer of 10 means: up to 10 jobs can be waiting
+	// Buffer of 3 means: up to 3 jobs can be waiting
 	// without a worker ready, before the channel blocks.
 
 	// Create the pool and set up 3 workers.
@@ -90,16 +98,16 @@ func main() {
 	// Buffering lets the server report its result even while main is shutting down.
 	serverErr := make(chan error, 1)
 	go func() {
-		log.Println("starting server on :8080")
+		slog.Info("starting server", "addr", server.Addr)
 		serverErr <- server.ListenAndServe()
 	}()
 
 	select {
 	case <-ctx.Done():
-		log.Println("shutdown signal received")
+		slog.Info("shutdown signal received")
 	case err := <-serverErr:
 		if !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("HTTP server stopped: %v", err)
+			slog.Error("HTTP server stopped", "error", err)
 		}
 	}
 	stop() // Restore normal signal handling; a second Ctrl+C can force an exit.
@@ -109,14 +117,15 @@ func main() {
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		// Handlers may still be sending jobs. Exit without closing their channel.
-		log.Fatalf("HTTP shutdown failed: %v", err)
+		slog.Error("HTTP shutdown failed", "error", err)
+		os.Exit(1)
 	}
 
 	// Shutdown succeeded: no HTTP handlers can send more jobs.
 	close(jobChannel)
-	log.Println("waiting for workers to finish queued jobs")
+	slog.Info("waiting for workers to finish queued jobs")
 	pool.Wait()
-	log.Println("shutdown complete")
+	slog.Info("shutdown complete")
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -146,17 +155,18 @@ func (app *application) createJobHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	j, err := app.jobStore.Create(r.Context(), req.Payload)
-	//j, err := app.store.Create(req.Payload) // Here we need to provide context as well? Otherwise the rest is the same?
 	if err != nil {
+		// The client gets a generic message; the real cause goes to our logs.
+		slog.Error("create job failed", "error", err)
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
 		return
 	}
 
-	// Queue the job. This blocks while the channel's ten slots are full.
+	// Queue the job. This blocks while the channel's three slots are full.
 	select {
 	case app.jobChan <- j: // queued, carry on
 	case <-r.Context().Done(): // client left before there was room
-		log.Printf("job %s created but not queued: %v", j.ID, r.Context().Err())
+		slog.Warn("job created but not queued", "job_id", j.ID, "error", r.Context().Err())
 		http.Error(w, "server busy, try again", http.StatusServiceUnavailable)
 		return
 	}
@@ -178,6 +188,7 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "job not found", http.StatusNotFound)
 			return
 		}
+		slog.Error("get job failed", "job_id", id, "error", err)
 		http.Error(w, "failed to get job", http.StatusInternalServerError)
 		return
 	}
@@ -189,6 +200,7 @@ func (app *application) getJobHandler(w http.ResponseWriter, r *http.Request) {
 func (app *application) getAllJobsHandler(w http.ResponseWriter, r *http.Request) {
 	jobs, err := app.jobStore.GetAll(r.Context())
 	if err != nil {
+		slog.Error("get all jobs failed", "error", err)
 		http.Error(w, "failed to get jobs", http.StatusInternalServerError)
 		return
 	}
